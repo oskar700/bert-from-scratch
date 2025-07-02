@@ -36,17 +36,23 @@ def train_tokenizer(text):
     tokenizer = BertWordPieceTokenizer(lowercase=True)
     tokenizer.train([vocab_file_name], vocab_size=vocab_size, min_frequency=2, 
                     special_tokens=["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"])
+    if not os.path.isdir(tokenizer_path):
+        os.makedirs(tokenizer_path)
     tokenizer.save_model(tokenizer_path)
 
 
 def train_base_model(training_dataset):
+    os.environ['TOKENIZERS_PARALLELISM'] = 'false'
     hf_tokenizer = BertTokenizerFast.from_pretrained(tokenizer_path)
 
+    #ds = training_dataset.train_test_split(test_size=0.2)
     def tokenize_function(examples):
-        return hf_tokenizer(examples["text"], return_special_tokens_mask=True, truncation=True, padding=True)
+        return hf_tokenizer(examples["text"], return_special_tokens_mask=True)
     
     block_size = 128
     tokenized_dataset = training_dataset.map(tokenize_function, batched=True, remove_columns=["text"])
+    #tokenized_dataset = ds['train'].map(tokenize_function, batched=True, remove_columns=["text"])
+    #tokenized_testset = ds['test'].map(tokenize_function, batched=True, remove_columns=["text"])
  
     def group_texts(examples):
         concatenated = {k: sum(examples[k], []) for k in examples.keys()}
@@ -56,6 +62,7 @@ def train_base_model(training_dataset):
             for k, t in concatenated.items()
         }
     tokenized_dataset = tokenized_dataset.map(group_texts, batched=True)
+    #tokenized_testset = tokenized_testset.map(group_texts, batched=True)
     
     config = BertConfig(
         vocab_size=vocab_size,
@@ -77,9 +84,13 @@ def train_base_model(training_dataset):
 
     training_args = TrainingArguments(
         output_dir="./domain-bert",
+        #eval_strategy = 'epoch',
+        learning_rate = 1e-4,
+        fp16 = True,
+        dataloader_num_workers = 2,
         overwrite_output_dir=True,
         num_train_epochs=5,
-        per_device_train_batch_size=16,
+        per_device_train_batch_size=64,
         save_steps=500,
         save_total_limit=2,
         logging_dir="./logs",
@@ -91,6 +102,7 @@ def train_base_model(training_dataset):
         args=training_args,
         data_collator=data_collator,
         train_dataset=tokenized_dataset
+    #    eval_dataset=tokenized_testset
     )
 
     trainer.train()
@@ -163,6 +175,7 @@ def process_training_file(file_name):
 
     print("Traiining tokenizer")
     train_tokenizer(text)
+    text = None
 
     print("Training base model")
     train_base_model(training_dataset)
